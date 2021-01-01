@@ -1,0 +1,43 @@
+#!/bin/sh
+
+cleanup () {
+  unset -f die cleanup nvm_windows_drive_posix
+  unset NVM_SOURCE out
+}
+die () { echo "$@" ; cleanup ; exit 1; }
+
+\. ../../../nvm.sh
+
+nvm_windows_drive_posix() {
+  if [ "$1" = "C:" ]; then
+    echo "/c"
+    return 0
+  fi
+  return 1
+}
+
+set -ex
+
+# nvm_ensure_posix_path is available
+type nvm_ensure_posix_path > /dev/null 2>&1 || die 'nvm_ensure_posix_path is not available'
+
+# nvm_ensure_posix_path with no parameter fails
+nvm_ensure_posix_path 2>&1 | grep "Need the location as first parameter" >/dev/null || die 'nvm_ensure_posix_path without parameter fails'
+
+# nvm_ensure_posix_path does not change a path wich is already posix
+[ "$(nvm_ensure_posix_path '/')" = '/' ] || die 'nvm_ensure_posix_path changed "/"'
+[ "$(nvm_ensure_posix_path '/some/path')" = '/some/path' ] || die 'nvm_ensure_posix_path changed "/some/path"'
+
+# nvm_ensure_posix_path works with relative path
+[ "$(nvm_ensure_posix_path 'some/path/to/something')" = 'some/path/to/something' ] || die 'nvm_ensure_posix_path did not properply convert "some/path/to/something"'
+[ "$(nvm_ensure_posix_path 'some\path\to\something')" = 'some/path/to/something' ] || die 'nvm_ensure_posix_path did not properply convert "some\path\to\something"'
+
+# nvm_ensure_posix_path works with absolute path
+[ "$(nvm_ensure_posix_path 'C:/some/path')" = '/c/some/path' ] || die 'nvm_ensure_posix_path did not properply convert "C:/some/path"'
+[ "$(nvm_ensure_posix_path 'C:\some\path')" = '/c/some/path' ] || die 'nvm_ensure_posix_path did not properply convert "C:\some\path"'
+
+# nvm_ensure_posix_path should fail with path with drive not mounted
+nvm_ensure_posix_path 'Z:/some/path' 2>/dev/null && die 'nvm_ensure_posix_path should fail with path with drive not mounted'
+nvm_ensure_posix_path 'Z:/some/path' 2>&1 | grep -Ee 'Unable to find where .* is mounted' || die 'nvm_ensure_posix_path should give message error with path with drive not mounted'
+
+cleanup

@@ -146,7 +146,18 @@ nvm_has_system_iojs() {
 }
 
 nvm_is_version_installed() {
-  [ -n "${1-}" ] && [ -x "$(nvm_version_path "$1" 2>/dev/null)"/bin/node ]
+  if [ -z "${1-}" ]; then
+    return 1
+  fi
+  local NODE
+  NODE='node'
+  if [ "_$(nvm_get_os)" = '_win' ]; then
+    NODE='node.exe'
+  fi
+  if [ -x "$(nvm_version_path "$1" 2>/dev/null)/bin/$NODE" ]; then
+    return 0
+  fi
+  return 1
 }
 
 nvm_print_npm_version() {
@@ -326,10 +337,14 @@ nvm_tree_contains_path() {
     return 2
   fi
 
+  local previous_pathdir
+  previous_pathdir="${node_path}"
   local pathdir
-  pathdir=$(dirname "${node_path}")
-  while [ "${pathdir}" != "" ] && [ "${pathdir}" != "." ] && [ "${pathdir}" != "/" ] && [ "${pathdir}" != "${tree}" ]; do
-    pathdir=$(dirname "${pathdir}")
+  pathdir=$(dirname "${previous_pathdir}")
+  while [ "${pathdir}" != '' ] && [ "${pathdir}" != '.' ] && [ "${pathdir}" != '/' ] &&
+      [ "${pathdir}" != "${tree}" ] && [ "${pathdir}" != "${previous_pathdir}" ]; do
+    previous_pathdir="${pathdir}"
+    pathdir=$(dirname "${previous_pathdir}")
   done
   [ "${pathdir}" = "${tree}" ]
 }
@@ -1559,7 +1574,7 @@ nvm_get_checksum() {
     SHASUMS_URL="${MIRROR}/${3}/SHASUMS.txt"
   fi
 
-  nvm_download -L -s "${SHASUMS_URL}" -o - | command awk "{ if (\"${4}.tar.${5}\" == \$2) print \$1}"
+  nvm_download -L -s "${SHASUMS_URL}" -o - | command awk "{ if (\"${4}.${5}\" == \$2) print \$1}"
 }
 
 nvm_print_versions() {
@@ -1761,6 +1776,7 @@ nvm_get_os() {
     SunOS\ *) NVM_OS=sunos ;;
     FreeBSD\ *) NVM_OS=freebsd ;;
     AIX\ *) NVM_OS=aix ;;
+    CYGWIN* | MSYS* | MINGW*) NVM_OS=win ;;
   esac
   nvm_echo "${NVM_OS-}"
 }
@@ -1858,6 +1874,64 @@ nvm_get_mirror() {
   esac
 }
 
+# args: os, prefixed version, version, tarball, extract directory
+nvm_install_binary_extract() {
+  [ "$#" -ne 5 ] && nvm_err "nvm_install_binary_extract needs 5 parameters" && return 1
+
+  local NVM_OS
+  local PREFIXED_VERSION
+  local VERSION
+  local TARBALL
+  local TMPDIR
+  NVM_OS="${1}"
+  PREFIXED_VERSION="${2}"
+  VERSION="${3}"
+  TARBALL="${4}"
+  TMPDIR="${5}"
+
+  local VERSION_PATH
+
+  [ -n "${TMPDIR-}" ] && \
+  command mkdir -p "${TMPDIR}" && \
+  VERSION_PATH="$(nvm_version_path "${PREFIXED_VERSION}")" || return 1
+
+  # For Windows system (GitBash with MSYS, Cygwin)
+  if [ "${NVM_OS}" = 'win' ]; then
+    VERSION_PATH="${VERSION_PATH}/bin"
+    command unzip -q "${TARBALL}" -d "${TMPDIR}" || return 1
+  # For non Windows system (including WSL running on Windows)
+  else
+    local tar_compression_flag
+    tar_compression_flag='z'
+    if nvm_supports_xz "${VERSION}"; then
+      tar_compression_flag='J'
+    fi
+
+    local tar
+    if [ "${NVM_OS}" = 'aix' ]; then
+      tar='gtar'
+    else
+      tar='tar'
+    fi
+    command "${tar}" -x${tar_compression_flag}f "${TARBALL}" -C "${TMPDIR}" --strip-components 1 || return 1
+  fi
+
+  command mkdir -p "${VERSION_PATH}" || return 1
+
+  if [ "${NVM_OS}" = 'win' ]; then
+    command mv "${TMPDIR}/"*/* "${VERSION_PATH}" || return 1
+    command chmod +x "${VERSION_PATH}"/node.exe || return 1
+    command chmod +x "${VERSION_PATH}"/npm || return 1
+    command chmod +x "${VERSION_PATH}"/npx 2>/dev/null
+  else
+    command mv "${TMPDIR}/"* "${VERSION_PATH}" || return 1
+  fi
+
+  command rm -rf "${TMPDIR}"
+
+  return 0
+}
+
 # args: flavor, type, version, reinstall
 nvm_install_binary() {
   local FLAVOR
@@ -1882,19 +1956,15 @@ nvm_install_binary() {
   local VERSION
   VERSION="$(nvm_strip_iojs_prefix "${PREFIXED_VERSION}")"
 
-  if [ -z "$(nvm_get_os)" ]; then
-    return 2
-  fi
+  local NVM_OS
+  NVM_OS="$(nvm_get_os)"
 
-  local tar_compression_flag
-  tar_compression_flag='z'
-  if nvm_supports_xz "${VERSION}"; then
-    tar_compression_flag='J'
+  if [ -z "${NVM_OS}" ]; then
+    return 2
   fi
 
   local TARBALL
   local TMPDIR
-  local VERSION_PATH
 
   local PROGRESS_BAR
   local NODE_OR_IOJS
@@ -1914,21 +1984,8 @@ nvm_install_binary() {
   if [ -f "${TARBALL}" ]; then
     TMPDIR="$(dirname "${TARBALL}")/files"
   fi
-  local tar
-  tar='tar'
-  if [ "${NVM_OS}" = 'aix' ]; then
-    tar='gtar'
-  fi
-  if (
-    [ -n "${TMPDIR-}" ] && \
-    command mkdir -p "${TMPDIR}" && \
-    command "${tar}" -x${tar_compression_flag}f "${TARBALL}" -C "${TMPDIR}" --strip-components 1 && \
-    VERSION_PATH="$(nvm_version_path "${PREFIXED_VERSION}")" && \
-    command mkdir -p "${VERSION_PATH}" && \
-    command mv "${TMPDIR}/"* "${VERSION_PATH}" && \
-    command rm -rf "${TMPDIR}"
-  ); then
 
+  if nvm_install_binary_extract "${NVM_OS}" "${PREFIXED_VERSION}" "${VERSION}" "${TARBALL}" "${TMPDIR}"; then
     if [ -n "${ALIAS-}" ]; then
       nvm alias "${ALIAS}" "${provided_version}"
     fi
@@ -1983,6 +2040,24 @@ nvm_get_download_slug() {
   fi
 }
 
+nvm_get_artifact_compression() {
+  local VERSION
+  VERSION="${1-}"
+
+  local NVM_OS
+  NVM_OS="$(nvm_get_os)"
+
+  local COMPRESSION
+  COMPRESSION='tar.gz'
+  if [ "_${NVM_OS}" = '_win' ]; then
+    COMPRESSION='zip'
+  elif nvm_supports_xz "${VERSION}"; then
+    COMPRESSION='tar.xz'
+  fi
+
+  nvm_echo "${COMPRESSION}"
+}
+
 # args: flavor, kind, type, version
 nvm_download_artifact() {
   local FLAVOR
@@ -2029,10 +2104,7 @@ nvm_download_artifact() {
   SLUG="$(nvm_get_download_slug "${FLAVOR}" "${KIND}" "${VERSION}")"
 
   local COMPRESSION
-  COMPRESSION='gz'
-  if nvm_supports_xz "${VERSION}"; then
-    COMPRESSION='xz'
-  fi
+  COMPRESSION="$(nvm_get_artifact_compression "${VERSION}")"
 
   local CHECKSUM
   CHECKSUM="$(nvm_get_checksum "${FLAVOR}" "${TYPE}" "${VERSION}" "${SLUG}" "${COMPRESSION}")"
@@ -2049,13 +2121,13 @@ nvm_download_artifact() {
   )
 
   local TARBALL
-  TARBALL="${tmpdir}/${SLUG}.tar.${COMPRESSION}"
+  TARBALL="${tmpdir}/${SLUG}.${COMPRESSION}"
   local TARBALL_URL
   if nvm_version_greater_than_or_equal_to "${VERSION}" 0.1.14; then
-    TARBALL_URL="${MIRROR}/${VERSION}/${SLUG}.tar.${COMPRESSION}"
+    TARBALL_URL="${MIRROR}/${VERSION}/${SLUG}.${COMPRESSION}"
   else
     # node <= 0.1.13 does not have a directory
-    TARBALL_URL="${MIRROR}/${SLUG}.tar.${COMPRESSION}"
+    TARBALL_URL="${MIRROR}/${SLUG}.${COMPRESSION}"
   fi
 
   if [ -r "${TARBALL}" ]; then
@@ -2317,6 +2389,49 @@ nvm_npmrc_bad_news_bears() {
   return 1
 }
 
+nvm_windows_drive_posix() {
+  nvm_grep -iEe "^$1 " /proc/mounts 2>/dev/null | command awk '{ print $2 }'
+}
+
+# args: path to check and transform if needed
+nvm_ensure_posix_path() {
+  if [ -z "${1-}" ]; then
+    nvm_err "Need the location as first parameter"
+    return 1
+  fi
+  local location
+  location="$1"
+
+  # If already posix path, just return it
+  if [ "$(command printf '%s' "$location" | command cut -b 1)" = "/" ]; then
+    nvm_echo "$location"
+    return 0
+  fi
+
+  # If absolute path (eg. starting with C:)
+  if command printf '%s' "$location" | command grep '^[a-zA-Z]:' >/dev/null 2>&1; then
+    # Get drive letter, eg. C:
+    local drive
+    drive=$(command printf '%s' "$location" | command cut -b -2)
+    local prefix
+    prefix=$(nvm_windows_drive_posix "$drive")
+
+    if [ -z "${prefix:-}" ]; then
+      nvm_err "Unable to find where '$drive' is mounted"
+      return 1
+    fi
+
+    # Remove drive letter prefix (eg. C:)
+    location=$(command printf '%s' "$location" | command cut -b 3-)
+    # Set prefix
+    location="${prefix}${location}"
+  fi
+
+  # Replace \ by /
+  location=$(command printf '%s' "$location" | command sed 's#\\#/#g')
+  nvm_echo "${location}"
+}
+
 nvm_die_on_prefix() {
   local NVM_DELETE_PREFIX
   NVM_DELETE_PREFIX="${1-}"
@@ -2346,6 +2461,9 @@ nvm_die_on_prefix() {
     return 3
   fi
 
+  local NVM_OS
+  NVM_OS="$(nvm_get_os)"
+
   # npm normalizes NPM_CONFIG_-prefixed env vars
   # https://github.com/npm/npmconf/blob/22827e4038d6eebaafeb5c13ed2b92cf97b8fb82/npmconf.js#L331-L348
   # https://github.com/npm/npm/blob/5e426a78ca02d0044f8dd26e0c5f881217081cbd/lib/config/core.js#L343-L359
@@ -2357,6 +2475,9 @@ nvm_die_on_prefix() {
   if [ -n "${NVM_NPM_CONFIG_PREFIX_ENV-}" ]; then
     local NVM_CONFIG_VALUE
     eval "NVM_CONFIG_VALUE=\"\$${NVM_NPM_CONFIG_PREFIX_ENV}\""
+    if [ -n "${NVM_CONFIG_VALUE-}" ] && [ "_${NVM_OS}" = "_win" ]; then
+      NVM_CONFIG_VALUE="$(nvm_ensure_posix_path "$NVM_CONFIG_VALUE")"
+    fi
     if [ -n "${NVM_CONFIG_VALUE-}" ] && ! nvm_tree_contains_path "${NVM_DIR}" "${NVM_CONFIG_VALUE}"; then
       nvm deactivate >/dev/null 2>&1
       nvm_err "nvm is not compatible with the \"${NVM_NPM_CONFIG_PREFIX_ENV}\" environment variable: currently set to \"${NVM_CONFIG_VALUE}\""
@@ -3130,8 +3251,13 @@ nvm() {
             nvm_get_make_jobs
           fi
 
-          NVM_NO_PROGRESS="${NVM_NO_PROGRESS:-${noprogress}}" nvm_install_source "${FLAVOR}" std "${VERSION}" "${NVM_MAKE_JOBS}" "${ADDITIONAL_PARAMETERS}"
-          EXIT_CODE=$?
+          if [ "_${NVM_OS}" = "_win" ]; then
+            nvm_err "Unable to install from source for Windows"
+            EXIT_CODE=87
+          else
+            NVM_NO_PROGRESS="${NVM_NO_PROGRESS:-${noprogress}}" nvm_install_source "${FLAVOR}" std "${VERSION}" "${NVM_MAKE_JOBS}" "${ADDITIONAL_PARAMETERS}"
+            EXIT_CODE=$?
+          fi
         fi
 
       fi
@@ -3944,6 +4070,8 @@ nvm() {
         nvm_npmrc_bad_news_bears \
         nvm_get_colors nvm_set_colors nvm_print_color_code nvm_format_help_message_colors \
         nvm_echo_with_colors nvm_err_with_colors \
+        nvm_ensure_posix_path nvm_windows_drive_posix \
+        nvm_install_binary_extract nvm_get_artifact_compression \
         >/dev/null 2>&1
       unset NVM_RC_VERSION NVM_NODEJS_ORG_MIRROR NVM_IOJS_ORG_MIRROR NVM_DIR \
         NVM_CD_FLAGS NVM_BIN NVM_INC NVM_MAKE_JOBS \
