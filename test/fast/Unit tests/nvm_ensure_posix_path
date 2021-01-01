@@ -1,0 +1,52 @@
+#!/bin/sh
+
+cleanup () {
+  unset -f die cleanup
+  unset NVM_SOURCE out
+  # sudo rmdir '/mnt/z' 2>/dev/null
+  # sudo rmdir '/mnt' 2>/dev/null
+  # sudo rmdir '/drives/z' 2>/dev/null
+  # sudo rmdir '/drives/w' 2>/dev/null
+  # sudo rmdir '/drives' 2>/dev/null
+}
+die () { echo "$@" ; cleanup ; exit 1; }
+
+\. ../../../nvm.sh
+
+set -ex
+
+# sudo mkdir -p '/mnt/z'
+# sudo mkdir -p '/drives/z'
+# sudo mkdir -p '/drives/w'
+
+# nvm_ensure_posix_path is available
+type nvm_ensure_posix_path > /dev/null 2>&1 || die 'nvm_ensure_posix_path is not available'
+
+# nvm_ensure_posix_path with no parameter fails
+nvm_ensure_posix_path 2>&1 | grep "Need the location as first parameter" >/dev/null || die 'nvm_ensure_posix_path without parameter fails'
+
+# nvm_ensure_posix_path does not change a path wich is already posix
+[ "$(nvm_ensure_posix_path '/')" = "/" ] || die 'nvm_ensure_posix_path changed "/"'
+[ "$(nvm_ensure_posix_path '/some/path')" = "/some/path" ] || die 'nvm_ensure_posix_path changed "/some/path"'
+
+# nvm_ensure_posix_path works with relative path
+[ "$(nvm_ensure_posix_path 'some/path/to/something')" = "some/path/to/something" ] || die 'nvm_ensure_posix_path did not properply convert "some/path/to/something"'
+[ "$(nvm_ensure_posix_path 'some\path\to\something')" = "some/path/to/something" ] || die 'nvm_ensure_posix_path did not properply convert "some\path\to\something"'
+
+# nvm_ensure_posix_path fails with absolute path to non existing drive letters
+# [ "$(nvm_ensure_posix_path 'X:/some/path')" = "Unable to convert the path to posix" ] || die 'nvm_ensure_posix_path did not properply convert "X:/some/path"'
+[ "$(nvm_ensure_posix_path 'X:/some/path')" = "/mnt/x/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "X:/some/path"'
+
+# nvm_ensure_posix_path works with absolute path
+# [ "$(nvm_ensure_posix_path 'C:/some/path')" = "/c/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "C:/some/path"'
+# [ "$(nvm_ensure_posix_path 'C:\some\path')" = "/c/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "C:\some\path"'
+[ "$(nvm_ensure_posix_path 'C:/some/path')" = "/mnt/c/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "C:/some/path"'
+[ "$(nvm_ensure_posix_path 'C:\some\path')" = "/mnt/c/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "C:\some\path"'
+
+# # nvm_ensure_posix_path works using /mnt with absolute path
+# [ "$(nvm_ensure_posix_path 'Z:/some/path')" = "/mnt/z/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "z:/some/path"'
+
+# # nvm_ensure_posix_path works using /drives with absolute path
+# [ "$(nvm_ensure_posix_path 'W:/some/path')" = "/drives/w/some/path" ] || die 'nvm_ensure_posix_path did not properply convert "W:/some/path"'
+
+cleanup
