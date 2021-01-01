@@ -79,11 +79,13 @@ nvm_download() {
     curl --fail --compressed -q "$@"
   elif nvm_has "wget"; then
     # Emulate curl with wget
-    ARGS=$(echo "$*" | command sed -e 's/--progress-bar /--progress=bar /' \
-                            -e 's/-L //' \
+    ARGS=$(nvm_echo "$@" | command sed -e 's/--progress-bar /--progress=bar /' \
                             -e 's/--compressed //' \
+                            -e 's/--fail //' \
+                            -e 's/-L //' \
                             -e 's/-I /--server-response /' \
                             -e 's/-s /-q /' \
+                            -e 's/-sS /-nv /' \
                             -e 's/-o /-O /' \
                             -e 's/-C - /-c /')
     # shellcheck disable=SC2086
