@@ -1,0 +1,108 @@
+#!/bin/sh
+
+SAVE_NVM_DIR="$NVM_DIR"
+
+cleanup () {
+  NVM_DIR="$SAVE_NVM_DIR"
+  unset -f die cleanup
+  unset SAVE_NVM_DIR
+}
+
+die () { echo -e "$@" ; cleanup ;  exit 1; }
+
+NVM_ENV=testing \. ../../install.sh
+
+set -x
+
+#nvm_do_install is available
+type install_nvm_from_git > /dev/null 2>&1 || die 'install_nvm_from_git is not available'
+
+### HANDLE LATEST VERSION ###
+
+NVM_DIR=$(mktemp -d) || die 'Unable to create temporary directory'
+NVM_DIR="$NVM_DIR/clone"
+# Ensure it clones the repository to the latest version
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$(nvm_latest_version)" || die "install_nvm_from_git did not clone latest version $(nvm_latest_version)"
+rm -rf "$NVM_DIR"
+NVM_DIR=$(dirname "$NVM_DIR")
+
+# Ensure it initializes the repository to the latest version
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$(nvm_latest_version)" || die "install_nvm_from_git did not checkout latest version $(nvm_latest_version)"
+
+# Ensure it updates the repository to the latest version
+git --git-dir "$NVM_DIR"/.git fetch origin tag "$(nvm_latest_version)" --depth=2
+git --git-dir "$NVM_DIR"/.git reset --hard HEAD~1
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$(nvm_latest_version)" || die "install_nvm_from_git did not checkout latest version $(nvm_latest_version)"
+
+### HANDLE GIVEN CHANGESET ###
+
+# Retrieve the previous changeset id
+git --git-dir "$NVM_DIR"/.git fetch origin tag "$(nvm_latest_version)" --depth=2
+NVM_INSTALL_VERSION=$(git --no-pager --git-dir "$NVM_DIR"/.git log HEAD~1 --pretty=format:'%H' -1)
+
+NVM_DIR=$(mktemp -d) || die 'Unable to create temporary directory'
+NVM_DIR="$NVM_DIR/clone"
+# Ensure it clones the repository to the given commit
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%H' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git should clone with the given changeset id $NVM_INSTALL_VERSION"
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$(nvm_latest_version)" && die "install_nvm_from_git from changeset id should not checkout latest version $(nvm_latest_version)"
+rm -rf "$NVM_DIR"
+NVM_DIR=$(dirname "$NVM_DIR")
+
+# Ensure it initializes the repository to the given commit
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%H' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git should checkout the given changeset id $NVM_INSTALL_VERSION"
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$(nvm_latest_version)" && die "install_nvm_from_git from changeset id should not checkout latest version $(nvm_latest_version)"
+
+# Ensure it updates to the given commit
+git --git-dir "$NVM_DIR"/.git fetch origin tag "$NVM_INSTALL_VERSION" --depth=2
+git --git-dir "$NVM_DIR"/.git reset --hard HEAD~1
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%H' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git should not checkout the given changeset id $NVM_INSTALL_VERSION"
+
+### HANDLE GIVEN VERSION ###
+
+NVM_DIR=$(mktemp -d) || die 'Unable to create temporary directory'
+NVM_DIR="$NVM_DIR/clone"
+NVM_INSTALL_VERSION="v0.37.0"
+# Ensure it clones the repository to the given version
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git did not clone given version $NVM_INSTALL_VERSION"
+rm -rf "$NVM_DIR"
+NVM_DIR=$(dirname "$NVM_DIR")
+
+# Ensure it initializes the repository to the given version
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git did not checkout given version $NVM_INSTALL_VERSION"
+
+# Ensure it updates the repository to the given version
+git --git-dir "$NVM_DIR"/.git fetch origin tag "$NVM_INSTALL_VERSION" --depth=2
+git --git-dir "$NVM_DIR"/.git reset --hard HEAD~1
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git did not checkout given version $NVM_INSTALL_VERSION"
+
+### HANDLE GIVEN REF ###
+
+NVM_DIR=$(mktemp -d) || die 'Unable to create temporary directory'
+NVM_DIR="$NVM_DIR/clone"
+NVM_INSTALL_VERSION="refs/heads/master"
+# Ensure it clones the repository to the given ref
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git did not clone given version $NVM_INSTALL_VERSION"
+rm -rf "$NVM_DIR"
+NVM_DIR=$(dirname "$NVM_DIR")
+
+# Ensure it initializes the repository to the given ref
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git did not checkout given version $NVM_INSTALL_VERSION"
+
+# Ensure it updates the repository to the given ref
+git --git-dir "$NVM_DIR"/.git fetch origin tag "$NVM_INSTALL_VERSION" --depth=2
+git --git-dir "$NVM_DIR"/.git reset --hard HEAD~1
+install_nvm_from_git
+git --git-dir "$NVM_DIR"/.git --no-pager log --pretty=format:'%d' -1 | grep -q "$NVM_INSTALL_VERSION" || die "install_nvm_from_git did not checkout given version $NVM_INSTALL_VERSION"
+
+cleanup

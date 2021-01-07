@@ -76,7 +76,7 @@ nvm_node_version() {
 
 nvm_download() {
   if nvm_has "curl"; then
-    curl --compressed -q "$@"
+    curl --fail --compressed -q "$@"
   elif nvm_has "wget"; then
     # Emulate curl with wget
     ARGS=$(echo "$*" | command sed -e 's/--progress-bar /--progress=bar /' \
@@ -94,14 +94,51 @@ nvm_download() {
 install_nvm_from_git() {
   local INSTALL_DIR
   INSTALL_DIR="$(nvm_install_dir)"
+  local NVM_VERSION
+  NVM_VERSION="${NVM_INSTALL_VERSION:-$(nvm_latest_version)}"
+  local IS_TAG
+  IS_TAG=1
+  local NO_TAG_DEPTH
+  NO_TAG_DEPTH="${NVM_INSTALL_DEPTH:-50}"
+  local IS_REF
+  IS_REF=0
+  if [ -n "${NVM_INSTALL_VERSION:-}" ]; then
+    IS_TAG=0
+    # Check if version is a tag
+    if [ "$(command git ls-remote "$(nvm_source "git")" "refs/tags/$NVM_VERSION" | wc -l)" != "0" ]; then
+      IS_TAG=1
+    # Check if version is a ref
+    elif [ "$(command git ls-remote "$(nvm_source "git")" "$NVM_VERSION" | wc -l)" != "0" ]; then
+      IS_REF=1
+    # Check if version is an existing changeset
+    elif ! nvm_download -o /dev/null "$(nvm_source "script-nvm-exec")"; then
+      echo >&2 "Failed to find '$NVM_VERSION' version."
+      exit 1
+    fi
+  fi
 
   if [ -d "$INSTALL_DIR/.git" ]; then
     echo "=> nvm is already installed in $INSTALL_DIR, trying to update using git"
     command printf '\r=> '
-    command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" fetch origin tag "$(nvm_latest_version)" --depth=1 2> /dev/null || {
-      echo >&2 "Failed to update nvm, run 'git fetch' in $INSTALL_DIR yourself."
-      exit 1
-    }
+    # Fetch tag
+    if [ "$IS_TAG" = "1" ]; then
+      command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" fetch origin tag "$NVM_VERSION" --depth=1 2> /dev/null || {
+        echo >&2 "Failed to update nvm, run 'git fetch' in $INSTALL_DIR yourself."
+        exit 1
+      }
+    # Fetch ref
+    elif [ "$IS_REF" = "1" ]; then
+      command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" fetch origin "$NVM_VERSION" --depth=1 2> /dev/null || {
+        echo >&2 "Failed to update nvm, run 'git fetch' in $INSTALL_DIR yourself."
+        exit 1
+      }
+    # Fetch master with depth to access changeset
+    else
+      command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" fetch origin master --depth="$NO_TAG_DEPTH" 2> /dev/null || {
+        echo >&2 "Failed to update nvm, run 'git fetch' in $INSTALL_DIR yourself."
+        exit 1
+      }
+    fi
   else
     # Cloning to $INSTALL_DIR
     echo "=> Downloading nvm from git to '$INSTALL_DIR'"
@@ -117,18 +154,59 @@ install_nvm_from_git() {
         echo >&2 'Failed to add remote "origin" (or set the URL). Please report this!'
         exit 2
       }
-      command git --git-dir="${INSTALL_DIR}/.git" fetch origin tag "$(nvm_latest_version)" --depth=1 || {
-        echo >&2 'Failed to fetch origin with tags. Please report this!'
-        exit 2
-      }
+      # Fetch tag
+      if [ "$IS_TAG" = "1" ]; then
+        command git --git-dir="${INSTALL_DIR}/.git" fetch origin tag "$NVM_VERSION" --depth=1 || {
+          echo >&2 'Failed to fetch origin with tags. Please report this!'
+          exit 2
+        }
+      # Fetch ref
+      elif [ "$IS_REF" = "1" ]; then
+        command git --git-dir="${INSTALL_DIR}/.git" fetch origin "$NVM_VERSION" --depth=1 || {
+          echo >&2 'Failed to fetch origin with refs. Please report this!'
+          exit 2
+        }
+      # Fetch master with depth to access changeset
+      else
+        command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" fetch origin master --depth="$NO_TAG_DEPTH" 2> /dev/null || {
+          echo >&2 'Failed to fetch origin. Please report this!'
+          exit 1
+        }
+      fi
     else
-      command git -c advice.detachedHead=false clone "$(nvm_source)" -b "$(nvm_latest_version)" --depth=1 "${INSTALL_DIR}" || {
-        echo >&2 'Failed to clone nvm repo. Please report this!'
-        exit 2
-      }
+      # Clone tag
+      if [ "$IS_TAG" = "1" ]; then
+        command git -c advice.detachedHead=false clone "$(nvm_source)" -b "$NVM_VERSION" --depth=1 "${INSTALL_DIR}" || {
+          echo >&2 'Failed to clone nvm repo. Please report this!'
+          exit 2
+        }
+      # Clone master and fetch ref
+      elif [ "$IS_REF" = "1" ]; then
+        if ! command git clone "$(nvm_source)" -b master --depth=1 "${INSTALL_DIR}" ||
+            ! command git --git-dir="${INSTALL_DIR}/.git" fetch origin "$NVM_VERSION" --depth=1; then
+          echo >&2 'Failed to clone nvm repo. Please report this!'
+          exit 2
+        fi
+      # Clone master with depth to access changeset
+      else
+        command git clone "$(nvm_source)" -b master --depth="$NO_TAG_DEPTH" "${INSTALL_DIR}" || {
+          echo >&2 'Failed to clone nvm repo. Please report this!'
+          exit 2
+        }
+      fi
     fi
   fi
-  command git -c advice.detachedHead=false --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" checkout -f --quiet "$(nvm_latest_version)"
+  if [ "$IS_REF" = "1" ]; then
+    command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" checkout -f --quiet -B "$NVM_VERSION" || {
+      echo >&2 "Failed to checkout the given version $NVM_VERSION. Please report this!"
+      exit 2
+    }
+  else
+    command git -c advice.detachedHead=false --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" checkout -f --quiet "$NVM_VERSION" || {
+      echo >&2 "Failed to checkout the given version $NVM_VERSION. Please report this!"
+      exit 2
+    }
+  fi
   if [ -n "$(command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" show-ref refs/heads/master)" ]; then
     if command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" branch --quiet 2>/dev/null; then
       command git --git-dir="$INSTALL_DIR"/.git --work-tree="$INSTALL_DIR" branch --quiet -D master >/dev/null 2>&1
